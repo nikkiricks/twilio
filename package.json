@@ -1,0 +1,29 @@
+{
+  "name": "twilio",
+  "version": "1.0.0",
+  "description": "twilio technical interview prep",
+  "license": "ISC",
+  "author": "nikki",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "npx tsx --watch index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.0",
+    "@prisma/adapter-libsql": "^7.3.0",
+    "@prisma/client": "^7.3.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "nodemon": "^3.1.11",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.0.10",
+    "prisma": "^7.3.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
