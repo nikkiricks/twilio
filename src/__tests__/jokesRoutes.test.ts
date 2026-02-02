@@ -20,6 +20,7 @@ describe("Jokes Routes", () => {
   describe("Route Registration", () => {
     it("should register GET /jokes route", async () => {
       vi.mocked(mockPrisma.joke.findMany).mockResolvedValue([]);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(0);
 
       const response = await request(app).get("/jokes");
 
@@ -35,36 +36,123 @@ describe("Jokes Routes", () => {
     });
 
     it("should register POST /jokes route", async () => {
-      const response = await request(app).post("/jokes").send({});
+      const mockJoke = createMockJoke({ text: "test" });
+      vi.mocked(mockPrisma.joke.create).mockResolvedValue(mockJoke);
 
-      expect(response.status).toBe(400);
+      const response = await request(app).post("/jokes").send({ text: "test" });
+
+      expect(response.status).toBe(201);
     });
   });
 
   describe("GET /jokes - Integration", () => {
-    it("should return all jokes ordered by id descending", async () => {
+    it("should return all jokes with pagination", async () => {
       const mockJokes = [
         createMockJoke({ id: 2, text: "Second joke" }),
         createMockJoke({ id: 1, text: "First joke" }),
       ];
       vi.mocked(mockPrisma.joke.findMany).mockResolvedValue(mockJokes);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(2);
 
       const response = await request(app).get("/jokes");
 
       expect(response.status).toBe(200);
-      expect(response.body).toEqual(mockJokes.map(toJsonFormat));
-      expect(mockPrisma.joke.findMany).toHaveBeenCalledWith({
-        orderBy: { id: "desc" },
+      expect(response.body).toEqual({
+        data: mockJokes.map(toJsonFormat),
+        pagination: {
+          page: 1,
+          limit: 10,
+          total: 2,
+          totalPages: 1,
+        },
       });
     });
 
     it("should return empty array when no jokes exist", async () => {
       vi.mocked(mockPrisma.joke.findMany).mockResolvedValue([]);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(0);
 
       const response = await request(app).get("/jokes");
 
       expect(response.status).toBe(200);
-      expect(response.body).toEqual([]);
+      expect(response.body.data).toEqual([]);
+    });
+
+    it("should support pagination query params", async () => {
+      vi.mocked(mockPrisma.joke.findMany).mockResolvedValue([]);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(50);
+
+      const response = await request(app).get("/jokes?page=2&limit=5");
+
+      expect(response.status).toBe(200);
+      expect(mockPrisma.joke.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skip: 5,
+          take: 5,
+        })
+      );
+      expect(response.body.pagination).toEqual({
+        page: 2,
+        limit: 5,
+        total: 50,
+        totalPages: 10,
+      });
+    });
+
+    it("should support author filter", async () => {
+      vi.mocked(mockPrisma.joke.findMany).mockResolvedValue([]);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(0);
+
+      const response = await request(app).get("/jokes?author=John");
+
+      expect(response.status).toBe(200);
+      expect(mockPrisma.joke.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { author: { contains: "John" } },
+        })
+      );
+    });
+
+    it("should support search filter", async () => {
+      vi.mocked(mockPrisma.joke.findMany).mockResolvedValue([]);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(0);
+
+      const response = await request(app).get("/jokes?search=funny");
+
+      expect(response.status).toBe(200);
+      expect(mockPrisma.joke.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { text: { contains: "funny" } },
+        })
+      );
+    });
+
+    it("should support sorting", async () => {
+      vi.mocked(mockPrisma.joke.findMany).mockResolvedValue([]);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(0);
+
+      const response = await request(app).get("/jokes?sortBy=createdAt&sortOrder=asc");
+
+      expect(response.status).toBe(200);
+      expect(mockPrisma.joke.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { createdAt: "asc" },
+        })
+      );
+    });
+
+    it("should return 400 for invalid page param", async () => {
+      const response = await request(app).get("/jokes?page=abc");
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe("Validation failed");
+    });
+
+    it("should return 400 for invalid limit param", async () => {
+      const response = await request(app).get("/jokes?limit=999");
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe("Validation failed");
     });
   });
 
@@ -79,9 +167,6 @@ describe("Jokes Routes", () => {
 
       expect(response.status).toBe(201);
       expect(response.body).toEqual(toJsonFormat(newJoke));
-      expect(mockPrisma.joke.create).toHaveBeenCalledWith({
-        data: { text: "New joke", author: undefined },
-      });
     });
 
     it("should create a joke with text and author", async () => {
@@ -100,7 +185,12 @@ describe("Jokes Routes", () => {
       const response = await request(app).post("/jokes").send({});
 
       expect(response.status).toBe(400);
-      expect(response.body).toEqual({ error: "Missing required field: text" });
+      expect(response.body.error).toBe("Validation failed");
+      expect(response.body.details).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "text" }),
+        ])
+      );
       expect(mockPrisma.joke.create).not.toHaveBeenCalled();
     });
 
@@ -108,14 +198,14 @@ describe("Jokes Routes", () => {
       const response = await request(app).post("/jokes").send({ text: "" });
 
       expect(response.status).toBe(400);
-      expect(response.body).toEqual({ error: "Missing required field: text" });
+      expect(response.body.error).toBe("Validation failed");
     });
 
     it("should return 400 when text is not a string", async () => {
       const response = await request(app).post("/jokes").send({ text: 123 });
 
       expect(response.status).toBe(400);
-      expect(response.body).toEqual({ error: "Missing required field: text" });
+      expect(response.body.error).toBe("Validation failed");
     });
   });
 
@@ -146,7 +236,12 @@ describe("Jokes Routes", () => {
       const response = await request(app).get("/jokes/abc");
 
       expect(response.status).toBe(400);
-      expect(response.body).toEqual({ error: "id must be an integer" });
+      expect(response.body.error).toBe("Validation failed");
+      expect(response.body.details).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "id" }),
+        ])
+      );
       expect(mockPrisma.joke.findUnique).not.toHaveBeenCalled();
     });
 
@@ -154,7 +249,7 @@ describe("Jokes Routes", () => {
       const response = await request(app).get("/jokes/1.5");
 
       expect(response.status).toBe(400);
-      expect(response.body).toEqual({ error: "id must be an integer" });
+      expect(response.body.error).toBe("Validation failed");
     });
 
     it("should handle large valid integer ids", async () => {

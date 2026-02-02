@@ -1,28 +1,61 @@
 import type { Request, Response } from "express";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import { handlePrismaError } from "../utils/prismaErrors.js";
+import type {
+  CreateJokeInput,
+  IdParam,
+  GetJokesQuery,
+} from "../schemas/jokeSchemas.js";
 
 export function createJokesController(prisma: PrismaClient) {
   return {
-    async getAll(_req: Request, res: Response): Promise<void> {
+    async getAll(req: Request, res: Response): Promise<void> {
       try {
-        const jokes = await prisma.joke.findMany({
-          orderBy: { id: "desc" },
+        const { page, limit, author, search, sortBy, sortOrder } =
+          req.validatedQuery as GetJokesQuery;
+
+        const skip = (page - 1) * limit;
+
+        const where: {
+          author?: { contains: string };
+          text?: { contains: string };
+        } = {};
+
+        if (author) {
+          where.author = { contains: author };
+        }
+        if (search) {
+          where.text = { contains: search };
+        }
+
+        const [jokes, total] = await Promise.all([
+          prisma.joke.findMany({
+            where,
+            orderBy: { [sortBy]: sortOrder },
+            skip,
+            take: limit,
+          }),
+          prisma.joke.count({ where }),
+        ]);
+
+        res.json({
+          data: jokes,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit),
+          },
         });
-        res.json(jokes);
       } catch (error) {
         handlePrismaError(error, res);
       }
     },
 
     async getById(req: Request, res: Response): Promise<Response | void> {
-      const id = Number(req.params.id);
-
-      if (!Number.isInteger(id)) {
-        return res.status(400).json({ error: "id must be an integer" });
-      }
-
       try {
+        const { id } = req.validatedParams as IdParam;
+
         const joke = await prisma.joke.findUnique({ where: { id } });
 
         if (!joke) {
@@ -36,13 +69,9 @@ export function createJokesController(prisma: PrismaClient) {
     },
 
     async create(req: Request, res: Response): Promise<Response | void> {
-      const { text, author } = req.body as { text?: string; author?: string };
-
-      if (!text || typeof text !== "string") {
-        return res.status(400).json({ error: "Missing required field: text" });
-      }
-
       try {
+        const { text, author } = req.validatedBody as CreateJokeInput;
+
         const joke = await prisma.joke.create({
           data: { text, author },
         });

@@ -9,6 +9,15 @@ function createMockRequest(overrides: Partial<Request> = {}): Request {
   return {
     params: {},
     body: {},
+    query: {},
+    validatedBody: undefined,
+    validatedParams: undefined,
+    validatedQuery: {
+      page: 1,
+      limit: 10,
+      sortBy: "id" as const,
+      sortOrder: "desc" as const,
+    },
     ...overrides,
   } as Request;
 }
@@ -33,12 +42,13 @@ describe("JokesController", () => {
   });
 
   describe("getAll", () => {
-    it("should return all jokes ordered by id descending", async () => {
+    it("should return all jokes with pagination", async () => {
       const mockJokes = [
         createMockJoke({ id: 2, text: "Second joke" }),
         createMockJoke({ id: 1, text: "First joke" }),
       ];
       vi.mocked(mockPrisma.joke.findMany).mockResolvedValue(mockJokes);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(2);
 
       const req = createMockRequest();
       const res = createMockResponse();
@@ -46,20 +56,123 @@ describe("JokesController", () => {
       await controller.getAll(req, res);
 
       expect(mockPrisma.joke.findMany).toHaveBeenCalledWith({
+        where: {},
         orderBy: { id: "desc" },
+        skip: 0,
+        take: 10,
       });
-      expect(res.json).toHaveBeenCalledWith(mockJokes);
+      expect(res.json).toHaveBeenCalledWith({
+        data: mockJokes,
+        pagination: {
+          page: 1,
+          limit: 10,
+          total: 2,
+          totalPages: 1,
+        },
+      });
     });
 
     it("should return empty array when no jokes exist", async () => {
       vi.mocked(mockPrisma.joke.findMany).mockResolvedValue([]);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(0);
 
       const req = createMockRequest();
       const res = createMockResponse();
 
       await controller.getAll(req, res);
 
-      expect(res.json).toHaveBeenCalledWith([]);
+      expect(res.json).toHaveBeenCalledWith({
+        data: [],
+        pagination: {
+          page: 1,
+          limit: 10,
+          total: 0,
+          totalPages: 0,
+        },
+      });
+    });
+
+    it("should filter by author", async () => {
+      vi.mocked(mockPrisma.joke.findMany).mockResolvedValue([]);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(0);
+
+      const req = createMockRequest({
+        validatedQuery: {
+          page: 1,
+          limit: 10,
+          sortBy: "id" as const,
+          sortOrder: "desc" as const,
+          author: "John",
+        },
+      });
+      const res = createMockResponse();
+
+      await controller.getAll(req, res);
+
+      expect(mockPrisma.joke.findMany).toHaveBeenCalledWith({
+        where: { author: { contains: "John" } },
+        orderBy: { id: "desc" },
+        skip: 0,
+        take: 10,
+      });
+    });
+
+    it("should filter by search term", async () => {
+      vi.mocked(mockPrisma.joke.findMany).mockResolvedValue([]);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(0);
+
+      const req = createMockRequest({
+        validatedQuery: {
+          page: 1,
+          limit: 10,
+          sortBy: "id" as const,
+          sortOrder: "desc" as const,
+          search: "funny",
+        },
+      });
+      const res = createMockResponse();
+
+      await controller.getAll(req, res);
+
+      expect(mockPrisma.joke.findMany).toHaveBeenCalledWith({
+        where: { text: { contains: "funny" } },
+        orderBy: { id: "desc" },
+        skip: 0,
+        take: 10,
+      });
+    });
+
+    it("should handle pagination correctly", async () => {
+      vi.mocked(mockPrisma.joke.findMany).mockResolvedValue([]);
+      vi.mocked(mockPrisma.joke.count).mockResolvedValue(25);
+
+      const req = createMockRequest({
+        validatedQuery: {
+          page: 2,
+          limit: 10,
+          sortBy: "id" as const,
+          sortOrder: "desc" as const,
+        },
+      });
+      const res = createMockResponse();
+
+      await controller.getAll(req, res);
+
+      expect(mockPrisma.joke.findMany).toHaveBeenCalledWith({
+        where: {},
+        orderBy: { id: "desc" },
+        skip: 10,
+        take: 10,
+      });
+      expect(res.json).toHaveBeenCalledWith({
+        data: [],
+        pagination: {
+          page: 2,
+          limit: 10,
+          total: 25,
+          totalPages: 3,
+        },
+      });
     });
 
     it("should handle database errors", async () => {
@@ -88,7 +201,7 @@ describe("JokesController", () => {
       const mockJoke = createMockJoke({ id: 1 });
       vi.mocked(mockPrisma.joke.findUnique).mockResolvedValue(mockJoke);
 
-      const req = createMockRequest({ params: { id: "1" } });
+      const req = createMockRequest({ validatedParams: { id: 1 } });
       const res = createMockResponse();
 
       await controller.getById(req, res);
@@ -102,7 +215,7 @@ describe("JokesController", () => {
     it("should return 404 when joke is not found", async () => {
       vi.mocked(mockPrisma.joke.findUnique).mockResolvedValue(null);
 
-      const req = createMockRequest({ params: { id: "999" } });
+      const req = createMockRequest({ validatedParams: { id: 999 } });
       const res = createMockResponse();
 
       await controller.getById(req, res);
@@ -111,32 +224,10 @@ describe("JokesController", () => {
       expect(res.json).toHaveBeenCalledWith({ error: "Joke not found" });
     });
 
-    it("should return 400 when id is not a valid integer", async () => {
-      const req = createMockRequest({ params: { id: "abc" } });
-      const res = createMockResponse();
-
-      await controller.getById(req, res);
-
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: "id must be an integer" });
-      expect(mockPrisma.joke.findUnique).not.toHaveBeenCalled();
-    });
-
-    it("should return 400 when id is a float", async () => {
-      const req = createMockRequest({ params: { id: "1.5" } });
-      const res = createMockResponse();
-
-      await controller.getById(req, res);
-
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: "id must be an integer" });
-      expect(mockPrisma.joke.findUnique).not.toHaveBeenCalled();
-    });
-
     it("should handle zero as a valid id", async () => {
       vi.mocked(mockPrisma.joke.findUnique).mockResolvedValue(null);
 
-      const req = createMockRequest({ params: { id: "0" } });
+      const req = createMockRequest({ validatedParams: { id: 0 } });
       const res = createMockResponse();
 
       await controller.getById(req, res);
@@ -149,7 +240,7 @@ describe("JokesController", () => {
     it("should handle negative integer ids", async () => {
       vi.mocked(mockPrisma.joke.findUnique).mockResolvedValue(null);
 
-      const req = createMockRequest({ params: { id: "-1" } });
+      const req = createMockRequest({ validatedParams: { id: -1 } });
       const res = createMockResponse();
 
       await controller.getById(req, res);
@@ -166,7 +257,7 @@ describe("JokesController", () => {
       });
       vi.mocked(mockPrisma.joke.findUnique).mockRejectedValue(dbError);
 
-      const req = createMockRequest({ params: { id: "1" } });
+      const req = createMockRequest({ validatedParams: { id: 1 } });
       const res = createMockResponse();
 
       await controller.getById(req, res);
@@ -184,7 +275,9 @@ describe("JokesController", () => {
       const newJoke = createMockJoke({ text: "New joke", author: null });
       vi.mocked(mockPrisma.joke.create).mockResolvedValue(newJoke);
 
-      const req = createMockRequest({ body: { text: "New joke" } });
+      const req = createMockRequest({
+        validatedBody: { text: "New joke" },
+      });
       const res = createMockResponse();
 
       await controller.create(req, res);
@@ -200,7 +293,9 @@ describe("JokesController", () => {
       const newJoke = createMockJoke({ text: "New joke", author: "John Doe" });
       vi.mocked(mockPrisma.joke.create).mockResolvedValue(newJoke);
 
-      const req = createMockRequest({ body: { text: "New joke", author: "John Doe" } });
+      const req = createMockRequest({
+        validatedBody: { text: "New joke", author: "John Doe" },
+      });
       const res = createMockResponse();
 
       await controller.create(req, res);
@@ -212,61 +307,6 @@ describe("JokesController", () => {
       expect(res.json).toHaveBeenCalledWith(newJoke);
     });
 
-    it("should return 400 when text is missing", async () => {
-      const req = createMockRequest({ body: {} });
-      const res = createMockResponse();
-
-      await controller.create(req, res);
-
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: "Missing required field: text" });
-      expect(mockPrisma.joke.create).not.toHaveBeenCalled();
-    });
-
-    it("should return 400 when text is empty string", async () => {
-      const req = createMockRequest({ body: { text: "" } });
-      const res = createMockResponse();
-
-      await controller.create(req, res);
-
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: "Missing required field: text" });
-      expect(mockPrisma.joke.create).not.toHaveBeenCalled();
-    });
-
-    it("should return 400 when text is not a string", async () => {
-      const req = createMockRequest({ body: { text: 123 } });
-      const res = createMockResponse();
-
-      await controller.create(req, res);
-
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: "Missing required field: text" });
-      expect(mockPrisma.joke.create).not.toHaveBeenCalled();
-    });
-
-    it("should return 400 when text is null", async () => {
-      const req = createMockRequest({ body: { text: null } });
-      const res = createMockResponse();
-
-      await controller.create(req, res);
-
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: "Missing required field: text" });
-      expect(mockPrisma.joke.create).not.toHaveBeenCalled();
-    });
-
-    it("should return 400 when text is an array", async () => {
-      const req = createMockRequest({ body: { text: ["joke1", "joke2"] } });
-      const res = createMockResponse();
-
-      await controller.create(req, res);
-
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: "Missing required field: text" });
-      expect(mockPrisma.joke.create).not.toHaveBeenCalled();
-    });
-
     it("should handle unique constraint violation", async () => {
       const dbError = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
         code: "P2002",
@@ -275,7 +315,9 @@ describe("JokesController", () => {
       });
       vi.mocked(mockPrisma.joke.create).mockRejectedValue(dbError);
 
-      const req = createMockRequest({ body: { text: "Duplicate joke" } });
+      const req = createMockRequest({
+        validatedBody: { text: "Duplicate joke" },
+      });
       const res = createMockResponse();
 
       await controller.create(req, res);
@@ -294,7 +336,9 @@ describe("JokesController", () => {
       });
       vi.mocked(mockPrisma.joke.create).mockRejectedValue(dbError);
 
-      const req = createMockRequest({ body: { text: "Test joke" } });
+      const req = createMockRequest({
+        validatedBody: { text: "Test joke" },
+      });
       const res = createMockResponse();
 
       await controller.create(req, res);
@@ -309,7 +353,9 @@ describe("JokesController", () => {
     it("should handle unexpected errors", async () => {
       vi.mocked(mockPrisma.joke.create).mockRejectedValue(new Error("Unexpected"));
 
-      const req = createMockRequest({ body: { text: "Test joke" } });
+      const req = createMockRequest({
+        validatedBody: { text: "Test joke" },
+      });
       const res = createMockResponse();
 
       await controller.create(req, res);
