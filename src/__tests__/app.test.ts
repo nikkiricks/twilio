@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import request from "supertest";
 import { createApp } from "../app.js";
-import { createMockPrisma } from "./helpers.js";
+import { createMockPrisma, createMockJoke } from "./helpers.js";
 
 describe("App", () => {
   describe("createApp", () => {
@@ -29,6 +29,8 @@ describe("App", () => {
   describe("Middleware", () => {
     it("should parse JSON request bodies", async () => {
       const mockPrisma = createMockPrisma();
+      const mockJoke = createMockJoke({ text: "test" });
+      vi.mocked(mockPrisma.joke.create).mockResolvedValue(mockJoke);
       const app = createApp(mockPrisma);
 
       const response = await request(app)
@@ -36,13 +38,14 @@ describe("App", () => {
         .set("Content-Type", "application/json")
         .send(JSON.stringify({ text: "test" }));
 
-      // Should process the request (even if it returns 400 due to validation)
-      // The fact that it processes JSON at all means middleware is working
-      expect(response.status).not.toBe(415);
+      // Should process the request successfully with mocked prisma
+      expect(response.status).toBe(201);
     });
 
     it("should parse URL-encoded request bodies", async () => {
       const mockPrisma = createMockPrisma();
+      const mockJoke = createMockJoke({ text: "test" });
+      vi.mocked(mockPrisma.joke.create).mockResolvedValue(mockJoke);
       const app = createApp(mockPrisma);
 
       const response = await request(app)
@@ -50,7 +53,8 @@ describe("App", () => {
         .set("Content-Type", "application/x-www-form-urlencoded")
         .send("text=test");
 
-      expect(response.status).not.toBe(415);
+      // Should process the request successfully with mocked prisma
+      expect(response.status).toBe(201);
     });
   });
 
