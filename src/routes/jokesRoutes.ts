@@ -1,11 +1,7 @@
 import type { Express, Request, Response } from "express";
-import { PrismaClient } from "../generated/prisma/client.js";
-import { PrismaLibSql } from "@prisma/adapter-libsql";
+import type { PrismaClient } from "../generated/prisma/client.js";
 
-const adapter = new PrismaLibSql({ url: "file:dev.db" });
-const prisma = new PrismaClient({ adapter });
-
-export default function routes(app: Express) {
+export function createJokesRoutes(app: Express, prisma: PrismaClient): void {
   // GET all jokes
   app.get("/jokes", async (_req: Request, res: Response) => {
     const jokes = await prisma.joke.findMany({
